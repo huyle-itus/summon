@@ -22,6 +22,7 @@ import numpy as np
 import trimesh
 import openmesh as om
 import posa_utils
+import MinkowskiEngine as ME
 
 
 def load_model(model_name='POSA', **kwargs):

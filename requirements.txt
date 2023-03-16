@@ -19,3 +19,4 @@ chumpy
 torchgeometry
 openmesh
 mesh-to-sdf
+MinkowskiEnigine
