@@ -3,7 +3,7 @@ __pycache__/
 .idea/
 smplx_models/
 models/
-data/
+# data/
 results/
 training/
 test_output/
