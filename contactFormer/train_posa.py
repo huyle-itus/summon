@@ -13,6 +13,7 @@ from posa_utils import count_parameters
 from posa_models import POSA
 from general_utils import compute_recon_loss_posa, compute_recon_loss
 import numpy as np
+import MinkowskiEngine as ME
 
 """
 Running sample:
@@ -37,10 +38,13 @@ def train():
             verts_can = verts_can.reshape(bs * seg_len, n_verts, -1)
             gt_cf = contacts_s.reshape(bs * seg_len, n_verts, -1)   # ground-truth contact features
 
+            verts_can_sp = ME.to_sparse_all(verts_can)
+            gt_cf_sp = ME.to_sparse_all(gt_cf)
+
             optimizer.zero_grad()
 
             # pr_cf: (bs, 655, 8), mu: (bs, 256), logvar: (bs, 256)
-            pr_cf, mu, logvar = model(gt_cf, verts_can)
+            pr_cf, mu, logvar = model(gt_cf_sp, verts_can_sp)
             recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
             KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / (bs * seg_len)
             loss = KLD + recon_loss_semantics
@@ -53,38 +57,38 @@ def train():
             total_train_loss += loss.item()
             total_KLD_loss += KLD.item()
             n_steps += 1
-    elif use_dataset == "bi":
-        for verts_can, contacts_s, mask in tqdm(train_data_loader):
-            bs, _, n_verts, _ = verts_can.shape
-            # verts_can: (bs, seg_len, Nverts, 3), contacts_s: (bs, seg_len, Nverts, 8)
-            verts_can = verts_can.to(device)
-            contacts_s = contacts_s.to(device)  # ground truth contact features
-            mask = mask.to(device)
+    # elif use_dataset == "bi":
+    #     for verts_can, contacts_s, mask in tqdm(train_data_loader):
+    #         bs, _, n_verts, _ = verts_can.shape
+    #         # verts_can: (bs, seg_len, Nverts, 3), contacts_s: (bs, seg_len, Nverts, 8)
+    #         verts_can = verts_can.to(device)
+    #         contacts_s = contacts_s.to(device)  # ground truth contact features
+    #         mask = mask.to(device)
 
-            verts_can = verts_can.reshape(bs * max_frame, n_verts, -1)
-            gt_cf = contacts_s.reshape(bs * max_frame, n_verts, -1)
+    #         verts_can = verts_can.reshape(bs * max_frame, n_verts, -1)
+    #         gt_cf = contacts_s.reshape(bs * max_frame, n_verts, -1)
 
-            optimizer.zero_grad()
+    #         optimizer.zero_grad()
 
-            # pr_cf: (bs, seg_len, 655, 8), mu: (bs, 256), logvar: (bs, 256)
-            pr_cf, mu, logvar = model(gt_cf, verts_can)
-            recon_loss_semantics, semantics_recon_acc = compute_recon_loss(gt_cf.unsqueeze(0), pr_cf.unsqueeze(0), mask=mask, **args_dict)
+    #         # pr_cf: (bs, seg_len, 655, 8), mu: (bs, 256), logvar: (bs, 256)
+    #         pr_cf, mu, logvar = model(gt_cf, verts_can)
+    #         recon_loss_semantics, semantics_recon_acc = compute_recon_loss(gt_cf.unsqueeze(0), pr_cf.unsqueeze(0), mask=mask, **args_dict)
 
-            real_seg_len = (int)(mask.sum())
-            mu = mu[:real_seg_len]
-            logvar = logvar[:real_seg_len]
-            KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / mask.sum()
+    #         real_seg_len = (int)(mask.sum())
+    #         mu = mu[:real_seg_len]
+    #         logvar = logvar[:real_seg_len]
+    #         KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / mask.sum()
 
-            loss = KLD + recon_loss_semantics
+    #         loss = KLD + recon_loss_semantics
 
-            loss.backward()
-            optimizer.step()
+    #         loss.backward()
+    #         optimizer.step()
 
-            total_recon_loss_semantics += recon_loss_semantics.item()
-            total_semantics_recon_acc += semantics_recon_acc.item()
-            total_train_loss += loss.item()
-            total_KLD_loss += KLD.item()
-            n_steps += 1
+    #         total_recon_loss_semantics += recon_loss_semantics.item()
+    #         total_semantics_recon_acc += semantics_recon_acc.item()
+    #         total_train_loss += loss.item()
+    #         total_KLD_loss += KLD.item()
+    #         n_steps += 1
 
     total_recon_loss_semantics /= n_steps
     total_train_loss /= n_steps
@@ -119,35 +123,38 @@ def validate():
                 # Remove seg_len dimension since we don't need it for training POSA
                 verts_can = verts_can.reshape(bs * seg_len, n_verts, -1)
                 gt_cf = contacts_s.reshape(bs * seg_len, n_verts, -1)
+                verts_can_sp = ME.to_sparse_all(verts_can)
+                gt_cf_sp = ME.to_sparse_all(gt_cf)
 
                 # pr_cf: (bs, 655, 43), mu: (bs, 256), logvar: (bs, 256)
                 z = torch.tensor(np.random.normal(0, 1, (bs * seg_len, 256)).astype(np.float32)).to(device)
-                pr_cf = model.decoder(z, verts_can)
+                z = ME.to_sparse_all(z.unsqueeze(-1))
+                pr_cf = model.decoder(z, verts_can_sp)
                 recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
 
                 total_recon_loss_semantics += recon_loss_semantics.item()
                 total_semantics_recon_acc += semantics_recon_acc.item()
                 n_steps += 1
-        elif use_dataset == "bi":
-            for verts_can, contacts_s, mask in tqdm(valid_data_loader):
-                bs, _, n_verts, _ = verts_can.shape
-                # verts_can: (bs, seg_len, Nverts, 3), contacts: (bs, seg_len, Nverts, 1), contacts_s: (bs, seg_len, Nverts, 42)
-                verts_can = verts_can.to(device).squeeze()
-                contacts_s = contacts_s.to(device)
-                mask = mask.to(device)
+        # elif use_dataset == "bi":
+        #     for verts_can, contacts_s, mask in tqdm(valid_data_loader):
+        #         bs, _, n_verts, _ = verts_can.shape
+        #         # verts_can: (bs, seg_len, Nverts, 3), contacts: (bs, seg_len, Nverts, 1), contacts_s: (bs, seg_len, Nverts, 42)
+        #         verts_can = verts_can.to(device).squeeze()
+        #         contacts_s = contacts_s.to(device)
+        #         mask = mask.to(device)
 
-                verts_can = verts_can.reshape(bs * max_frame, n_verts, -1)
-                gt_cf = contacts_s.reshape(bs * max_frame, n_verts, -1)
+        #         verts_can = verts_can.reshape(bs * max_frame, n_verts, -1)
+        #         gt_cf = contacts_s.reshape(bs * max_frame, n_verts, -1)
 
-                # pr_cf: (bs, seg_len, 655, 43), mu: (bs, 256), logvar: (bs, 256)
-                z = torch.tensor(np.random.normal(0, 1, (max_frame, 256)).astype(np.float32)).to(device)
-                posa_out = model.decoder(z, verts_can)
-                pr_cf = posa_out
-                recon_loss_semantics, semantics_recon_acc = compute_recon_loss(gt_cf.unsqueeze(0), pr_cf.unsqueeze(0), mask=mask, **args_dict)
+        #         # pr_cf: (bs, seg_len, 655, 43), mu: (bs, 256), logvar: (bs, 256)
+        #         z = torch.tensor(np.random.normal(0, 1, (max_frame, 256)).astype(np.float32)).to(device)
+        #         posa_out = model.decoder(z, verts_can)
+        #         pr_cf = posa_out
+        #         recon_loss_semantics, semantics_recon_acc = compute_recon_loss(gt_cf.unsqueeze(0), pr_cf.unsqueeze(0), mask=mask, **args_dict)
 
-                total_recon_loss_semantics += recon_loss_semantics.item()
-                total_semantics_recon_acc += semantics_recon_acc.item()
-                n_steps += 1
+        #         total_recon_loss_semantics += recon_loss_semantics.item()
+        #         total_semantics_recon_acc += semantics_recon_acc.item()
+        #         n_steps += 1
 
         total_recon_loss_semantics /= n_steps
         total_semantics_recon_acc /= n_steps

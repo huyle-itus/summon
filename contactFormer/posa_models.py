@@ -76,23 +76,24 @@ class SpiralConv(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.seq_length = indices.size(1)   # 9
-        self.layer = nn.Linear(in_channels * self.seq_length, out_channels) # Corresponding to eqn (8) in paper
+        self.layer = ME.MinkowskiLinear(in_channels * self.seq_length * 64, out_channels * 64) # Corresponding to eqn (8) in paper
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.layer.weight)
-        torch.nn.init.constant_(self.layer.bias, 0)
+        torch.nn.init.xavier_uniform_(self.layer.linear.weight)
+        torch.nn.init.constant_(self.layer.linear.weight, 0)
 
     def forward(self, x):
-        # x: (bs, 655, 46), indices: (655, 9)
+        # x: (bs, 655, 64), indices: (655, 9)
         n_nodes, _ = self.indices.size()
-        if x.dim() == 2:
-            x = torch.index_select(x, 0, self.indices.view(-1))
+        if x.F.dim() == 2:
+            x = torch.index_select(x.F, self.dim, self.indices.view(-1))
             x = x.view(n_nodes, -1)
-        elif x.dim() == 3:
-            bs = x.size(0)
-            x = torch.index_select(x, self.dim, self.indices.view(-1))  # (64, 655 * 9, 46)
-            x = x.view(bs, n_nodes, -1) # (64, 655, 9 * 46)
+            x = ME.to_sparse_all(x.unsqueeze(-1))
+        # elif x.dim() == 3:
+        #     bs = x.size(0)
+        #     x = torch.index_select(x, self.dim, self.indices.view(-1))  # (64, 655 * 9, 64)
+        #     x = x.view(bs, n_nodes, -1) # (64, 655, 9 * 64)
         else:
             raise RuntimeError(
                 'x.dim() is expected to be 2 or 3, but received {}'.format(
@@ -114,12 +115,12 @@ class GraphLin(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.layer = nn.Linear(in_channels, out_channels)
+        self.layer = ME.MinkowskiLinear(in_channels*64, out_channels*64)
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.layer.weight)
-        torch.nn.init.constant_(self.layer.bias, 0)
+        torch.nn.init.xavier_uniform_(self.layer.linear.weight)
+        torch.nn.init.constant_(self.layer.linear.bias, 0)
 
     def forward(self, x):
         x = self.layer(x)
@@ -142,9 +143,9 @@ class GraphLin_block(nn.Module):
                 num_groups = self.out_channels
             self.norm = get_norm_layer(self.out_channels, normalization_mode, num_groups)
         if self.non_lin:
-            self.relu = nn.ReLU()
+            self.relu = ME.MinkowskiReLU()
         if self.drop_out:
-            self.drop_out_layer = nn.Dropout(0.5)
+            self.drop_out_layer = ME.MinkowskiDropout(0.5)
 
     def forward(self, x):
         x = self.conv(x)
@@ -173,7 +174,7 @@ class Spiral_block(nn.Module):
                 num_groups = self.out_channels
             self.norm = get_norm_layer(self.out_channels, normalization_mode, num_groups)
         if self.non_lin:
-            self.relu = nn.ReLU()
+            self.relu = ME.MinkowskiReLU()
 
     def forward(self, x):
         x = self.conv(x)
@@ -193,14 +194,14 @@ class fc_block(nn.Module):
         self.non_lin = non_lin
         self.drop_out = drop_out
 
-        self.lin = nn.Linear(in_features, out_features)
+        self.lin = ME.MinkowskiLinear(in_features, out_features)
         if self.normalization_mode is not None:
             self.norm = get_norm_layer(self.out_features, self.normalization_mode)
 
         if self.non_lin:
-            self.relu = nn.ReLU()
+            self.relu = ME.MinkowskiReLU()
         if self.drop_out:
-            self.drop_out_layer = nn.Dropout(0.5)
+            self.drop_out_layer = ME.MinkowskiDropout(0.5)
 
     def forward(self, x):
         x = self.lin(x)
@@ -218,7 +219,8 @@ class ds_us_fn(nn.Module):
         self.M = M
 
     def forward(self, x):
-        return torch.matmul(self.M, x)
+        x = torch.matmul(self.M, x.F)
+        return ME.to_sparse_all(x.squeeze(-1))
 
 
 def load_ds_us_param(ds_us_dir, level, seq_length, use_cuda=True):
@@ -242,7 +244,7 @@ def load_ds_us_param(ds_us_dir, level, seq_length, use_cuda=True):
 
 
 class Encoder(nn.Module):
-    def __init__(self, h_dim=512, z_dim=256, channels=64, ds_us_dir='./mesh_ds', normalization_mode='group_norm',
+    def __init__(self, h_dim=512, z_dim=256, channels=64, ds_us_dir='./mesh_ds', normalization_mode=None,
                  num_groups=8, seq_length=9, no_obj_classes=8, use_cuda=True, **kwargs):
         super(Encoder, self).__init__()
 
@@ -273,15 +275,16 @@ class Encoder(nn.Module):
         self.en_spiral = nn.Sequential(*self.en_spiral)
 
         self.en_fc = nn.ModuleList()
-        self.en_fc.append(fc_block(self.nv[-1] * self.channels[-1], h_dim, normalization_mode='layer_norm'))
+        self.en_fc.append(fc_block(self.nv[-1] * self.channels[-1], h_dim, normalization_mode=None))
         self.en_fc = nn.Sequential(*self.en_fc)
-        self.en_mu = nn.Linear(h_dim, z_dim)
-        self.en_log_var = nn.Linear(h_dim, z_dim)
+        self.en_mu = ME.MinkowskiLinear(h_dim, z_dim)
+        self.en_log_var = ME.MinkowskiLinear(h_dim, z_dim)
 
     def forward(self, x, vertices):
-        x = torch.cat((vertices, x), dim=-1)
+        x = ME.to_sparse_all(torch.cat((vertices.F, x.F)).unsqueeze(-1))
         x = self.en_spiral(x)
-        x = x.reshape(-1, self.nv[-1] * self.channels[-1])
+        x = x.F.reshape(-1, self.nv[-1] * self.channels[-1])
+        x = ME.to_sparse_all(x.squeeze(-1))
         x = self.en_fc(x)   # (bs, 512)
         return self.en_mu(x), self.en_log_var(x)
 
@@ -312,8 +315,9 @@ class Decoder(nn.Module):
         self.de_spiral = nn.Sequential(*self.de_spiral)
 
     def forward(self, x, vertices):
-        x = x.unsqueeze(1).expand((-1, vertices.shape[1], -1))
-        x = torch.cat((vertices, x), dim=-1)
+        x = x.F.unsqueeze(1).expand((-1, vertices.F.shape[1], -1))
+        x = ME.to_sparse_all(x)
+        x = ME.to_sparse_all(torch.cat((vertices.F, x.F)).unsqueeze(0))
         x = self.de_spiral(x)
         return x
 
@@ -325,7 +329,7 @@ class POSA(nn.Module):
         self.decoder = Decoder(**kwargs)
 
     def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
+        std = torch.exp(0.5 * logvar.F)
         eps = torch.randn_like(std)
         return mu + eps * std
 
@@ -333,4 +337,7 @@ class POSA(nn.Module):
         mu, logvar = self.encoder(x, vertices)  # mu, logvar = (bs, 256)
         z = self.reparameterize(mu, logvar)
         out = self.decoder(z, vertices) # out = (bs, n_verts, 8)
+        mu = mu.F
+        logvar = mu.F
+        out = out.F.view(-1, 655, 8)
         return out, mu, logvar
