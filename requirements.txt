@@ -1,4 +1,4 @@
-sklearn
+scikit-learn
 numpy
 PyYAML
 configargparse
@@ -19,4 +19,3 @@ chumpy
 torchgeometry
 openmesh
 mesh-to-sdf
-MinkowskiEnigine

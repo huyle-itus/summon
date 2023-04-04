@@ -50,7 +50,7 @@ def train():
             loss = KLD + recon_loss_semantics
 
             loss.backward()
-            optimizer.step()
+            # optimizer.step()
 
             total_recon_loss_semantics += recon_loss_semantics.item()
             total_semantics_recon_acc += semantics_recon_acc.item()

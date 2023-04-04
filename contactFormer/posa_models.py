@@ -86,8 +86,9 @@ class SpiralConv(nn.Module):
     def forward(self, x):
         # x: (bs, 655, 64), indices: (655, 9)
         n_nodes, _ = self.indices.size()
+        # print('Before Conv Spiral: ', x.F.shape)
         if x.F.dim() == 2:
-            x = torch.index_select(x.F, self.dim, self.indices.view(-1))
+            x = torch.index_select(x.F.view(-1, n_nodes), self.dim, self.indices.view(-1))
             x = x.view(n_nodes, -1)
             x = ME.to_sparse_all(x.unsqueeze(-1))
         # elif x.dim() == 3:
@@ -98,8 +99,9 @@ class SpiralConv(nn.Module):
             raise RuntimeError(
                 'x.dim() is expected to be 2 or 3, but received {}'.format(
                     x.dim()))
-
+        # print('Conv: ', x.F.shape)
         x = self.layer(x)
+        # print('After Conv: ', x.F.shape)
         return x
 
     def __repr__(self):
@@ -177,11 +179,13 @@ class Spiral_block(nn.Module):
             self.relu = ME.MinkowskiReLU()
 
     def forward(self, x):
+        # print('Spiral block: ', x.F.shape)
         x = self.conv(x)
         if self.normalization_mode is not None:
             x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)
         if self.non_lin:
             x = self.relu(x)
+        # print('After Spiral block: ', x.F.shape)
         return x
 
 
@@ -220,7 +224,7 @@ class ds_us_fn(nn.Module):
 
     def forward(self, x):
         x = torch.matmul(self.M, x.F)
-        return ME.to_sparse_all(x.squeeze(-1))
+        return ME.to_sparse_all(x.unsqueeze(-1))
 
 
 def load_ds_us_param(ds_us_dir, level, seq_length, use_cuda=True):
@@ -281,17 +285,20 @@ class Encoder(nn.Module):
         self.en_log_var = ME.MinkowskiLinear(h_dim, z_dim)
 
     def forward(self, x, vertices):
+        print('X: ', x.F.shape)
+        print('vertices: ', vertices.F.shape)
         x = ME.to_sparse_all(torch.cat((vertices.F, x.F)).unsqueeze(-1))
+        print('Encoder: ', x.F.shape)
         x = self.en_spiral(x)
         x = x.F.reshape(-1, self.nv[-1] * self.channels[-1])
-        x = ME.to_sparse_all(x.squeeze(-1))
+        x = ME.to_sparse_all(x.unsqueeze(-1))
         x = self.en_fc(x)   # (bs, 512)
         return self.en_mu(x), self.en_log_var(x)
 
 
 class Decoder(nn.Module):
     def __init__(self, z_dim=256, num_hidden_layers=3, channels=64, ds_us_dir='./mesh_ds',
-                 normalization_mode='group_norm', num_groups=8, seq_length=9, no_obj_classes=8,
+                 normalization_mode=None, num_groups=8, seq_length=9, no_obj_classes=8,
                  use_cuda=True, **kwargs):
         super(Decoder, self).__init__()
         self.f_dim = no_obj_classes
@@ -338,6 +345,6 @@ class POSA(nn.Module):
         z = self.reparameterize(mu, logvar)
         out = self.decoder(z, vertices) # out = (bs, n_verts, 8)
         mu = mu.F
-        logvar = mu.F
+        logvar = logvar.F
         out = out.F.view(-1, 655, 8)
         return out, mu, logvar
