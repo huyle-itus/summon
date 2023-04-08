@@ -37,26 +37,26 @@ def train():
             # Remove seg_len dimension since we don't need it for training POSA
             verts_can = verts_can.reshape(bs * seg_len, n_verts, -1)
             gt_cf = contacts_s.reshape(bs * seg_len, n_verts, -1)   # ground-truth contact features
+            if verts_can.shape[0] == 64:
+                verts_can_sp = ME.to_sparse_all(verts_can)
+                gt_cf_sp = ME.to_sparse_all(gt_cf)
 
-            verts_can_sp = ME.to_sparse_all(verts_can)
-            gt_cf_sp = ME.to_sparse_all(gt_cf)
+                optimizer.zero_grad()
 
-            optimizer.zero_grad()
+                # pr_cf: (bs, 655, 8), mu: (bs, 256), logvar: (bs, 256)
+                pr_cf, mu, logvar = model(gt_cf_sp, verts_can_sp)
+                recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
+                KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / (bs * seg_len)
+                loss = KLD + recon_loss_semantics
 
-            # pr_cf: (bs, 655, 8), mu: (bs, 256), logvar: (bs, 256)
-            pr_cf, mu, logvar = model(gt_cf_sp, verts_can_sp)
-            recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
-            KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / (bs * seg_len)
-            loss = KLD + recon_loss_semantics
+                loss.backward()
+                # optimizer.step()
 
-            loss.backward()
-            # optimizer.step()
-
-            total_recon_loss_semantics += recon_loss_semantics.item()
-            total_semantics_recon_acc += semantics_recon_acc.item()
-            total_train_loss += loss.item()
-            total_KLD_loss += KLD.item()
-            n_steps += 1
+                total_recon_loss_semantics += recon_loss_semantics.item()
+                total_semantics_recon_acc += semantics_recon_acc.item()
+                total_train_loss += loss.item()
+                total_KLD_loss += KLD.item()
+                n_steps += 1
     # elif use_dataset == "bi":
     #     for verts_can, contacts_s, mask in tqdm(train_data_loader):
     #         bs, _, n_verts, _ = verts_can.shape
@@ -123,18 +123,19 @@ def validate():
                 # Remove seg_len dimension since we don't need it for training POSA
                 verts_can = verts_can.reshape(bs * seg_len, n_verts, -1)
                 gt_cf = contacts_s.reshape(bs * seg_len, n_verts, -1)
-                verts_can_sp = ME.to_sparse_all(verts_can)
-                gt_cf_sp = ME.to_sparse_all(gt_cf)
+                if verts_can.shape[0] == 64:
+                    verts_can_sp = ME.to_sparse_all(verts_can)
+                    gt_cf_sp = ME.to_sparse_all(gt_cf)
 
-                # pr_cf: (bs, 655, 43), mu: (bs, 256), logvar: (bs, 256)
-                z = torch.tensor(np.random.normal(0, 1, (bs * seg_len, 256)).astype(np.float32)).to(device)
-                z = ME.to_sparse_all(z.unsqueeze(-1))
-                pr_cf = model.decoder(z, verts_can_sp)
-                recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
+                    # pr_cf: (bs, 655, 43), mu: (bs, 256), logvar: (bs, 256)
+                    z = torch.tensor(np.random.normal(0, 1, (bs * seg_len, 256)).astype(np.float32)).to(device)
+                    z = ME.to_sparse_all(z.unsqueeze(-1))
+                    pr_cf = model.decoder(z, verts_can_sp)
+                    recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
 
-                total_recon_loss_semantics += recon_loss_semantics.item()
-                total_semantics_recon_acc += semantics_recon_acc.item()
-                n_steps += 1
+                    total_recon_loss_semantics += recon_loss_semantics.item()
+                    total_semantics_recon_acc += semantics_recon_acc.item()
+                    n_steps += 1
         # elif use_dataset == "bi":
         #     for verts_can, contacts_s, mask in tqdm(valid_data_loader):
         #         bs, _, n_verts, _ = verts_can.shape
