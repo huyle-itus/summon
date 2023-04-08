@@ -285,10 +285,10 @@ class Encoder(nn.Module):
         self.en_log_var = ME.MinkowskiLinear(h_dim, z_dim)
 
     def forward(self, x, vertices):
-        print('X: ', x.F.shape)
-        print('vertices: ', vertices.F.shape)
+        # print('X: ', x.F.shape)
+        # print('vertices: ', vertices.F.shape)
         x = ME.to_sparse_all(torch.cat((vertices.F, x.F)).unsqueeze(-1))
-        print('Encoder: ', x.F.shape)
+        # print('Encoder: ', x.F.shape)
         x = self.en_spiral(x)
         x = x.F.reshape(-1, self.nv[-1] * self.channels[-1])
         x = ME.to_sparse_all(x.unsqueeze(-1))

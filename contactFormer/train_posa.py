@@ -126,6 +126,7 @@ def validate():
                 # Remove seg_len dimension since we don't need it for training POSA
                 verts_can = verts_can.reshape(bs * seg_len, n_verts, -1)
                 gt_cf = contacts_s.reshape(bs * seg_len, n_verts, -1)
+                print('gt_cf evaluate: ', gt_cf.shape)
                 if verts_can.shape[0] == 64:
                     verts_can_sp = ME.to_sparse_all(verts_can)
                     gt_cf_sp = ME.to_sparse_all(gt_cf)
@@ -137,6 +138,7 @@ def validate():
                     pr_cf = model.decoder(z, verts_can_sp)
                     e_t = time.time() - start_e_t
                     print('evaluate_time_model = {:.4f}'.format(e_t))
+                    pr_cf = pr_cf.F.view(-1, n_verts, gt_cf.shape[-1])
                     recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
 
                     total_recon_loss_semantics += recon_loss_semantics.item()
