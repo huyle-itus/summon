@@ -44,7 +44,10 @@ def train():
                 optimizer.zero_grad()
 
                 # pr_cf: (bs, 655, 8), mu: (bs, 256), logvar: (bs, 256)
+                start_t = time.time()
                 pr_cf, mu, logvar = model(gt_cf_sp, verts_can_sp)
+                training_t = time.time() - start_t
+                print('training_time_model = {:.4f}'.format(training_t))
                 recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
                 KLD = kl_w * (-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())) / (bs * seg_len)
                 loss = KLD + recon_loss_semantics
@@ -130,7 +133,10 @@ def validate():
                     # pr_cf: (bs, 655, 43), mu: (bs, 256), logvar: (bs, 256)
                     z = torch.tensor(np.random.normal(0, 1, (bs * seg_len, 256)).astype(np.float32)).to(device)
                     z = ME.to_sparse_all(z.unsqueeze(-1))
+                    start_e_t = time.time()
                     pr_cf = model.decoder(z, verts_can_sp)
+                    e_t = time.time() - start_e_t
+                    print('evaluate_time_model = {:.4f}'.format(e_t))
                     recon_loss_semantics, semantics_recon_acc = compute_recon_loss_posa(gt_cf, pr_cf, **args_dict)
 
                     total_recon_loss_semantics += recon_loss_semantics.item()
