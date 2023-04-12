@@ -84,13 +84,13 @@ class SpiralConv(nn.Module):
         torch.nn.init.xavier_uniform_(self.layer.linear.weight)
         torch.nn.init.constant_(self.layer.linear.weight, 0)
 
-    def forward(self, x, bs):
+    def forward(self, x):
         # x: (bs, 655, 64), indices: (655, 9)
         # x_me: x.F (bs*k, 655)
         n_nodes, _ = self.indices.size()
         # print('Before Conv Spiral: ', x.F.shape)
         x = torch.index_select(x.F.view(-1, n_nodes), self.dim, self.indices.view(-1))
-        x = x.view(n_nodes * bs, -1)
+        x = x.view(-1, self.in_channels * self.seq_length)
         x = f.create_me_tensor(x)
         # print('Conv: ', x.F.shape)
         x = self.layer(x)
@@ -172,9 +172,9 @@ class Spiral_block(nn.Module):
         if self.non_lin:
             self.relu = ME.MinkowskiReLU()
 
-    def forward(self, x, bs):
+    def forward(self, x):
         # print('Spiral block: ', x.F.shape)
-        x = self.conv(x, bs)
+        x = self.conv(x)
         # if self.normalization_mode is not None:
         #     x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)
         if self.non_lin:
@@ -243,7 +243,7 @@ def load_ds_us_param(ds_us_dir, level, seq_length, use_cuda=True):
 
 
 class Encoder(nn.Module):
-    def __init__(self, h_dim=512, z_dim=256, channels=64, bs=64, ds_us_dir='./mesh_ds', normalization_mode=None,
+    def __init__(self, h_dim=512, z_dim=256, channels=64, ds_us_dir='./mesh_ds', normalization_mode=None,
                  num_groups=8, seq_length=9, no_obj_classes=8, use_cuda=True, **kwargs):
         super(Encoder, self).__init__()
 
@@ -279,13 +279,13 @@ class Encoder(nn.Module):
         self.en_mu = ME.MinkowskiLinear(h_dim, z_dim)
         self.en_log_var = ME.MinkowskiLinear(h_dim, z_dim)
 
-    def forward(self, x, vertices, bs):
+    def forward(self, x, vertices):
         # print('X: ', x.F.shape)
         # print('vertices: ', vertices.F.shape)
         x = torch.cat((vertices.F, x.F))    #(bs * k, 655)
         x = f.create_me_tensor(x) 
         # print('Encoder: ', x.F.shape)
-        x = self.en_spiral(x, bs)
+        x = self.en_spiral(x)
         x = x.F.reshape(-1, self.nv[-1] * self.channels[-1])
         x = f.create_me_tensor(x)
         x = self.en_fc(x)   # (bs, 512)
@@ -317,13 +317,14 @@ class Decoder(nn.Module):
         self.de_spiral.append(SpiralConv(self.channels[0], self.f_dim, self.spiral_indices[0]))
         self.de_spiral = nn.Sequential(*self.de_spiral)
 
-    def forward(self, x, vertices, bs=64):
+    def forward(self, x, vertices):
         # x.F (bs, 256), vertices.F = (bs*3, 655)
         n_nodes = vertices.F.shape[1]
+        bs = vertices.F.shape[0]/3
         x = x.F.unsqueeze(1).expand((-1, n_nodes, -1)) #x (bs, 655, 256)
         x = torch.cat((vertices.F.view(-1, bs*n_nodes), x.view(-1, n_nodes*bs)))#x (259, 655*bs)
         x = ME.to_sparse_all(x.unsqueeze(0)) #x.F (655*bs, 259)
-        x = self.de_spiral(x, bs)
+        x = self.de_spiral(x)
         return x
 
 
@@ -338,10 +339,10 @@ class POSA(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def forward(self, x, vertices=None, bs=64):
-        mu, logvar = self.encoder(x, vertices, bs)  # mu, logvar = (bs, 256)
+    def forward(self, x, vertices=None):
+        mu, logvar = self.encoder(x, vertices)  # mu, logvar = (bs, 256)
         z = self.reparameterize(mu, logvar) #z.F (bs, 256)
-        out = self.decoder(z, vertices, bs) # out = (bs, n_verts, 8)
+        out = self.decoder(z, vertices) # out = (bs, n_verts, 8)
         mu = mu.F
         logvar = logvar.F
         out = out.F.view(-1, 655, 8)
