@@ -320,9 +320,11 @@ class Decoder(nn.Module):
     def forward(self, x, vertices):
         # x.F (bs, 256), vertices.F = (bs*3, 655)
         n_nodes = vertices.F.shape[1]
-        bs = vertices.F.shape[0]/3
+        bs = int(vertices.F.shape[0]/3)
         x = x.F.unsqueeze(1).expand((-1, n_nodes, -1)) #x (bs, 655, 256)
-        x = torch.cat((vertices.F.view(-1, bs*n_nodes), x.view(-1, n_nodes*bs)))#x (259, 655*bs)
+        # print('x shape: ', x.shape)
+        # print('vertices.F: ', vertices.F.shape)
+        x = torch.cat((vertices.F.view(-1, bs*n_nodes), x.reshape((-1, n_nodes*bs))))#x (259, 655*bs)
         x = ME.to_sparse_all(x.unsqueeze(0)) #x.F (655*bs, 259)
         x = self.de_spiral(x)
         return x
